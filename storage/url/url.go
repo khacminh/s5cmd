@@ -41,6 +41,7 @@ type URL struct {
 	Path      string
 	Delimiter string
 	Prefix    string
+	Range     string
 
 	relativePath string
 	filter       string

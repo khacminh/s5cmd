@@ -177,6 +177,11 @@ func NewSharedFlags() []cli.Flag {
 			Name:  "content-encoding",
 			Usage: "set content encoding for target: defines content encoding header for object, e.g. --content-encoding gzip",
 		},
+		&cli.StringFlag{
+			Name:    "range",
+			Aliases: []string{"r"},
+			Usage:   "get with range, e.g. --range 0-9 to get 10 first bytes",
+		},
 	}
 }
 
@@ -257,6 +262,7 @@ type Copy struct {
 	expires               string
 	contentType           string
 	contentEncoding       string
+	byteRange             string
 
 	// region settings
 	srcRegion string
@@ -296,6 +302,7 @@ func NewCopy(c *cli.Context, deleteSource bool) Copy {
 		expires:               c.String("expires"),
 		contentType:           c.String("content-type"),
 		contentEncoding:       c.String("content-encoding"),
+		byteRange:             c.String("range"),
 		// region settings
 		srcRegion: c.String("source-region"),
 		dstRegion: c.String("destination-region"),
@@ -322,6 +329,10 @@ func (c Copy) Run(ctx context.Context) error {
 	if err != nil {
 		printError(c.fullCommand, c.op, err)
 		return err
+	}
+
+	if c.byteRange != "" {
+		srcurl.Range = c.byteRange
 	}
 
 	// override source region if set

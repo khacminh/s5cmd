@@ -407,11 +407,17 @@ func (s *S3) Get(
 		return 0, nil
 	}
 
-	return s.downloader.DownloadWithContext(ctx, to, &s3.GetObjectInput{
+	getInput := &s3.GetObjectInput{
 		Bucket:       aws.String(from.Bucket),
 		Key:          aws.String(from.Path),
 		RequestPayer: s.RequestPayer(),
-	}, func(u *s3manager.Downloader) {
+	}
+
+	if from.Range != "" {
+		getInput.Range = aws.String(fmt.Sprintf("bytes=%v", from.Range))
+	}
+
+	return s.downloader.DownloadWithContext(ctx, to, getInput, func(u *s3manager.Downloader) {
 		u.PartSize = partSize
 		u.Concurrency = concurrency
 	})
