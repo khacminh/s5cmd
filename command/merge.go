@@ -7,7 +7,6 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/urfave/cli/v2"
 
@@ -28,40 +27,29 @@ Options:
 Examples:
 	1. Merge s3 objects into a file
 		 > s5cmd {{.HelpName}} file-list.txt output.data
+	2. 100 files will be downloaded at the same time
+		 > s5cmd {{.HelpName}} -b 100 file-list.txt output.data
 `
 
-// func NewMergeCommandFlags() []cli.Flag {
-// 	copyFlags := []cli.Flag{
-// 		&cli.BoolFlag{
-// 			Name:    "input",
-// 			Aliases: []string{"f"},
-// 			Usage:   "flatten directory structure of source, starting from the first wildcard",
-// 		},
-// 		&cli.BoolFlag{
-// 			Name:    "no-clobber",
-// 			Aliases: []string{"n"},
-// 			Usage:   "do not overwrite destination if already exists",
-// 		},
-// 		&cli.BoolFlag{
-// 			Name:    "if-size-differ",
-// 			Aliases: []string{"s"},
-// 			Usage:   "only overwrite destination if size differs",
-// 		},
-// 		&cli.BoolFlag{
-// 			Name:    "if-source-newer",
-// 			Aliases: []string{"u"},
-// 			Usage:   "only overwrite destination if source modtime is newer",
-// 		},
-// 	}
-// 	sharedFlags := NewSharedFlags()
-// 	return append(copyFlags, sharedFlags...)
-// }
+func NewMergeCommandFlags() []cli.Flag {
+	mergeFlags := []cli.Flag{
+		&cli.IntFlag{
+			Name:    "batch-size",
+			Aliases: []string{"b"},
+			Value:   500,
+			Usage:   "number of files will be downloaded at the same time. default is 500",
+		},
+	}
+	return mergeFlags
+}
 
 func NewMergeCommand() *cli.Command {
+
 	return &cli.Command{
 		Name:               "merge",
 		HelpName:           "merge",
 		Usage:              "read the S3 objects and merge them into a single file. The given objects is provided in a text file",
+		Flags:              NewMergeCommandFlags(),
 		CustomHelpTemplate: mergeHelpTemplate,
 		Before: func(c *cli.Context) error {
 			err := validateMergeCommand(c)
@@ -90,6 +78,7 @@ func NewMergeCommand() *cli.Command {
 				fullCommand: fullCommand,
 
 				storageOpts: NewStorageOpts(c),
+				batchSize:   c.Int("batch-size"),
 			}.Run(c.Context)
 		},
 	}
@@ -104,69 +93,49 @@ type Merge struct {
 
 	// s3 options
 	storageOpts storage.Options
+	batchSize   int
 }
 
 // Run prints content of given source to standard output.
 func (m Merge) Run(ctx context.Context) error {
-
 	// get file list
 	objectKeys, err := readLines(m.src)
 	checkError(err)
-	// if err != nil {
-	// 	printError(m.fullCommand, m.op, err)
-	// 	return err
-	// }
 
-	chunkLen := 5000
-	objectKeyChunks := chunks(objectKeys, chunkLen)
-
+	objectKeyChunks := chunks(objectKeys, m.batchSize)
 	outputFile, err := os.Create(m.dst)
 	checkError(err)
 	defer outputFile.Close()
 
 	for chunkIdx, objectKeyChunk := range objectKeyChunks {
-		fmt.Println("--- chunk idx", chunkIdx, len(objectKeyChunks))
-		wg := new(sync.WaitGroup)
-		wg.Add(len(objectKeyChunk))
+		logline := fmt.Sprintf("--- chunk idx: %d/%d", chunkIdx+1, len(objectKeyChunks))
+		fmt.Println(logline)
+		// wg := new(sync.WaitGroup)
+		// wg.Add(len(objectKeyChunk))
+		var objectDatas []chan []byte
 
-		for objectIdx, objectKey := range objectKeyChunk {
-			fmt.Println("----- getting file ", chunkIdx, objectIdx)
+		for _, objectKey := range objectKeyChunk {
 			urlItems := splitAndTrim(objectKey, " --range ")
 			srcurl, err := url.New(urlItems[0])
 			checkError(err)
-			// if err != nil {
-			// 	printError(m.fullCommand, m.op, err)
-			// 	wg.Done()
-			// }
 
 			if len(urlItems) == 2 {
 				srcurl.Range = urlItems[1]
 			}
 
 			ch := make(chan []byte)
-			go m.doDownload(ctx, srcurl, ch, wg)
+			objectDatas = append(objectDatas, ch)
+			go m.doDownload(ctx, srcurl, ch)
 
-			_, err = outputFile.Write(<-ch)
+		}
+		// wg.Wait()
+
+		for _, result := range objectDatas {
+			_, err = outputFile.Write(<-result)
 			checkError(err)
 		}
-		wg.Wait()
 		outputFile.Sync()
 	}
-
-	// client, err := storage.NewRemoteClient(ctx, m.src, m.storageOpts)
-
-	// rc, err := client.Read(ctx, m.src)
-	// if err != nil {
-	// 	printError(m.fullCommand, m.op, err)
-	// 	return err
-	// }
-	// defer rc.Close()
-
-	// _, err = io.Copy(os.Stdout, rc)
-	// if err != nil {
-	// 	printError(m.fullCommand, m.op, err)
-	// 	return err
-	// }
 
 	return nil
 }
@@ -179,31 +148,18 @@ func validateMergeCommand(c *cli.Context) error {
 	return nil
 }
 
-func (m Merge) doDownload(ctx context.Context, srcurl *url.URL, ch chan<- []byte, wg *sync.WaitGroup) {
-	// size, err := srcClient.Get(ctx, srcurl, file, c.concurrency, c.partSize)
+func (m Merge) doDownload(ctx context.Context, srcurl *url.URL, ch chan<- []byte) {
 	// fmt.Println("doDownload", srcurl.Path)
-	defer wg.Done()
+	// defer wg.Done()
 	client, err := storage.NewRemoteClient(ctx, srcurl, m.storageOpts)
 	checkError(err)
-	// if err != nil {
-	// 	fmt.Println("doDownload - Create client failed")
-	// 	panic(err.Error())
-	// }
 
 	rc, err := client.Read(ctx, srcurl)
 	checkError(err)
-	// if err != nil {
-	// 	fmt.Println("doDownload - Read file failed")
-	// 	panic(err.Error())
-	// }
 	defer rc.Close()
 
 	body, err := ioutil.ReadAll(rc)
 	checkError(err)
-	// if err != nil {
-	// 	fmt.Println("doDownload - Convert to []byte failed")
-	// 	panic(err.Error())
-	// }
 
 	ch <- body
 }
