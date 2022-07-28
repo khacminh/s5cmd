@@ -200,6 +200,7 @@ func Commands() []*cli.Command {
 		NewRunCommand(),
 		NewSyncCommand(),
 		NewVersionCommand(),
+		NewMergeCommand(),
 	}
 }
 

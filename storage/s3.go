@@ -385,6 +385,7 @@ func (s *S3) Read(ctx context.Context, src *url.URL) (io.ReadCloser, error) {
 	resp, err := s.api.GetObjectWithContext(ctx, &s3.GetObjectInput{
 		Bucket:       aws.String(src.Bucket),
 		Key:          aws.String(src.Path),
+		Range:        aws.String(fmt.Sprintf("bytes=%v", src.Range)),
 		RequestPayer: s.RequestPayer(),
 	})
 	if err != nil {
@@ -407,17 +408,12 @@ func (s *S3) Get(
 		return 0, nil
 	}
 
-	getInput := &s3.GetObjectInput{
+	return s.downloader.DownloadWithContext(ctx, to, &s3.GetObjectInput{
 		Bucket:       aws.String(from.Bucket),
 		Key:          aws.String(from.Path),
+		Range:        aws.String(fmt.Sprintf("bytes=%v", from.Range)),
 		RequestPayer: s.RequestPayer(),
-	}
-
-	if from.Range != "" {
-		getInput.Range = aws.String(fmt.Sprintf("bytes=%v", from.Range))
-	}
-
-	return s.downloader.DownloadWithContext(ctx, to, getInput, func(u *s3manager.Downloader) {
+	}, func(u *s3manager.Downloader) {
 		u.PartSize = partSize
 		u.Concurrency = concurrency
 	})
