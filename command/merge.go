@@ -117,20 +117,21 @@ func (m Merge) Run(ctx context.Context) error {
 	// 	return err
 	// }
 
-	chunkLen := 500
+	chunkLen := 5000
 	objectKeyChunks := chunks(objectKeys, chunkLen)
 
 	outputFile, err := os.Create(m.dst)
 	checkError(err)
 	defer outputFile.Close()
 
-	for _, objectKeyChunk := range objectKeyChunks {
-
+	for chunkIdx, objectKeyChunk := range objectKeyChunks {
+		fmt.Println("--- chunk idx", chunkIdx, len(objectKeyChunks))
 		wg := new(sync.WaitGroup)
 		wg.Add(len(objectKeyChunk))
 
-		for _, objectKey := range objectKeyChunk {
-			urlItems := splitAndTrim(objectKey, "--range")
+		for objectIdx, objectKey := range objectKeyChunk {
+			fmt.Println("----- getting file ", chunkIdx, objectIdx)
+			urlItems := splitAndTrim(objectKey, " --range ")
 			srcurl, err := url.New(urlItems[0])
 			checkError(err)
 			// if err != nil {
@@ -180,7 +181,7 @@ func validateMergeCommand(c *cli.Context) error {
 
 func (m Merge) doDownload(ctx context.Context, srcurl *url.URL, ch chan<- []byte, wg *sync.WaitGroup) {
 	// size, err := srcClient.Get(ctx, srcurl, file, c.concurrency, c.partSize)
-	fmt.Println("doDownload", srcurl.Path)
+	// fmt.Println("doDownload", srcurl.Path)
 	defer wg.Done()
 	client, err := storage.NewRemoteClient(ctx, srcurl, m.storageOpts)
 	checkError(err)
